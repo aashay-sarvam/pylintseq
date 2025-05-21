@@ -75,6 +75,13 @@ def parse_args():
         type=int,
         help="How many edit paths should we (independently) sample per example in the dataset?",
     )
+    parser.add_argument(
+        "-l",
+        "--language",
+        default="python",
+        type=str,
+        help="The programming language of the input code (e.g., 'python', 'javascript')."
+    )
 
     args = parser.parse_args()
 
@@ -123,10 +130,10 @@ def subprocess_task(start_i, total_samples, args, shared_df, samples):
     for i in range(total_samples):
         index = samples[start_i + i]
         code_as_text = df_slice[args.code_data_field].iloc[i]
-        code_as_text = strip_chain_of_thought(code_as_text)
+        code_as_text = strip_chain_of_thought(code_as_text, language=args.language)
 
         for _ in range(args.num_edit_paths_per_sample):
-            edit_path = lintseq_backward_sampling_pythonic(
+            edit_path = lintseq_backward_sampling(
                 code_as_text,
                 children_per_round=1,
                 top_k=1,
@@ -137,6 +144,7 @@ def subprocess_task(start_i, total_samples, args, shared_df, samples):
                 ignore_comments=True,
                 ignore_global_defs=True,
                 ignore_init_errors=False,
+                language=args.language,
             )
 
             if edit_path is None:

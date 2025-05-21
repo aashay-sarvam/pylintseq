@@ -8,6 +8,7 @@ import pdb
 import random
 import tempfile
 import difflib
+import subprocess
 from pylint import run_pylint
 from typing import Iterable, Dict
 from copy import deepcopy
@@ -32,51 +33,98 @@ def swallow_io(stream):
                 yield stream
 
 
-def file_linter(file, expected_error_traces=None):
+def file_linter(file, expected_error_traces=None, language="python"):
     """
-    Cleanly pylint contents of temp file. Treat identation warnings as errors.
+    Cleanly lint contents of temp file. Treat identation warnings as errors for Python.
 
     Return all (unexpected) error traces in standardized template formatting.
     """
-    try:
-        program_io = io.StringIO()
-        with swallow_io(program_io):
-            run_pylint(
-                (
-                    "--disable=C,R",
-                    "--reports=n",
-                    "--score=n",
-                    "--unsafe-load-any-extension=y",
-                    "--generated-members=cv2.*",
-                    "--msg-template={C}|{msg_id}|{line}|{column}|{msg}",
-                    file,
-                )
-            )
-    except BaseException as e:
-        pass
-    io_stream = program_io.getvalue()
-    io_stream = io_stream.split("\n")
     error_traces = []
-    for line in io_stream:
+    if language == "python":
         try:
-            C, msg_id, line_id, column_id, msg = line.split("|")
-        except:
-            continue
+            program_io = io.StringIO()
+            with swallow_io(program_io):
+                run_pylint(
+                    (
+                        "--disable=C,R",
+                        "--reports=n",
+                        "--score=n",
+                        "--unsafe-load-any-extension=y",
+                        "--generated-members=cv2.*",
+                        "--msg-template={C}|{msg_id}|{line}|{column}|{msg}",
+                        file,
+                    )
+                )
+        except BaseException as e:
+            pass # TODO: consider logging this
+        io_stream = program_io.getvalue()
+        io_stream = io_stream.split("\n")
+        for line in io_stream:
+            try:
+                C, msg_id, line_id, column_id, msg = line.split("|")
+            except:
+                continue
 
-        # treat indentation warnings as errors
-        if C == "W" and msg_id not in ["W0311", "W0231"]:
-            continue
-        elif msg_id == "E0001" and "on line" in msg:
-            line_id = msg[: msg.rfind("(")].rstrip().split(" ")[-1]
+            # treat indentation warnings as errors
+            if C == "W" and msg_id not in ["W0311", "W0231"]:
+                continue
+            elif msg_id == "E0001" and "on line" in msg:
+                line_id = msg[: msg.rfind("(")].rstrip().split(" ")[-1]
 
-        error_trace = (
-            msg_id,
-            line_id,
-            column_id,
-            msg,
-        )
-        if expected_error_traces is None or not error_trace in expected_error_traces:
-            error_traces += [error_trace]
+            error_trace = (
+                msg_id,
+                str(line_id), # Ensure line_id is a string for consistency
+                str(column_id), # Ensure column_id is a string for consistency
+                msg,
+            )
+            if expected_error_traces is None or not error_trace in expected_error_traces:
+                error_traces.append(error_trace)
+    elif language == "javascript":
+        try:
+            # Ensure the file has a .js extension for ESLint if it's a temp file
+            # If 'file' is a path to a temp file, it might not have the right extension
+            # For now, we assume 'file' is a path to a file that ESLint can process directly
+            result = subprocess.run(
+                ["eslint", file, "-f", "json"],
+                capture_output=True,
+                text=True,
+                check=False, # Do not throw exception for non-zero exit codes
+            )
+            # With eslint.config.js, the specific "couldn't find config file" error
+            # should not be the primary way to detect a non-fatal setup issue.
+            # A non-zero return code without stdout might indicate other problems.
+            if result.returncode != 0 and not result.stdout.strip():
+                 # print(f"ESLint exited with code {result.returncode} and no JSON output for {file}. Stderr: {result.stderr}") # Keep this commented unless debugging
+                 return [] # No parseable output, likely an ESLint setup or fatal error
+
+            # ESLint outputs JSON to stdout
+            # If there are no linting errors, ESLint might output nothing or an empty list/object depending on version
+            if result.stdout.strip():
+                eslint_output = json.loads(result.stdout)
+                for item in eslint_output:
+                    for message in item.get("messages", []):
+                        error_trace = (
+                            message.get("ruleId", "unknown-rule"),
+                            str(message.get("line", 0)),
+                            str(message.get("column", 0)),
+                            message.get("message", ""),
+                        )
+                        if expected_error_traces is None or not error_trace in expected_error_traces:
+                            error_traces.append(error_trace)
+            # If ESLint command failed because it's not installed, result.stderr might contain info
+            # but FileNotFoundError is more reliable for "command not found"
+        except FileNotFoundError:
+            print("ESLint is not installed. Please install it to lint JavaScript files. You can often install it using: npm install -g eslint")
+            return [] # Return empty list as per requirement
+        except json.JSONDecodeError:
+            print(f"Failed to decode ESLint JSON output for {file}: {result.stdout}")
+            return [] # Or handle as appropriate
+        except Exception as e:
+            print(f"An unexpected error occurred during JavaScript linting: {e}")
+            return [] # Or handle as appropriate
+    else:
+        print(f"Unsupported language: {language}")
+
     return error_traces
 
 
@@ -142,7 +190,7 @@ def inflate_edit_path(code_as_text, edit_sequence):
     return raw_text_seq, [d for d in diff_text_seq if len(d) > 0]
 
 
-def strip_chain_of_thought(response, expected_programming_language="python"):
+def strip_chain_of_thought(response, language="python"):
     """Given an input example "response", strip away any chain-of-thought-like natural language
     by looking for Markdown formatting.
 
@@ -150,10 +198,10 @@ def strip_chain_of_thought(response, expected_programming_language="python"):
     """
     suffix = response
     code_chunks = []
-    while f"```{expected_programming_language}" in suffix:
+    while f"```{language}" in suffix:
         code_chunk_suffix = suffix[
-            suffix.find(f"```{expected_programming_language}")
-            + len(f"```{expected_programming_language}") :
+            suffix.find(f"```{language}")
+            + len(f"```{language}") :
         ]
         code_chunks += [code_chunk_suffix[: code_chunk_suffix.find("```")]]
         suffix = code_chunk_suffix[code_chunk_suffix.find("```") + len("```") :]
@@ -166,7 +214,7 @@ def strip_chain_of_thought(response, expected_programming_language="python"):
         return response
 
 
-def lintseq_backward_sampling_pythonic(
+def lintseq_backward_sampling(
     code_as_text: str,
     children_per_round: int = 16,
     top_k: int = 4,
@@ -177,6 +225,7 @@ def lintseq_backward_sampling_pythonic(
     ignore_comments: bool = True,
     ignore_global_defs: bool = True,
     ignore_init_errors: bool = False,
+    language: str = "python",
 ) -> list:
     """Implements the backward sampling phase of the LintSeq algorithm: given a text string
     representing a program, search over the space of possible sequences of error free insertion
@@ -204,6 +253,9 @@ def lintseq_backward_sampling_pythonic(
     Returns:
         > A list of all of the sampled edit sequences (i.e. expanded "paths" from root to leaf)
     """
+    if not code_as_text.strip(): # Handles empty or whitespace-only code
+        return [([], [], [])]
+
 
     def _apply_deletion_edit(edit):
         """
@@ -252,16 +304,14 @@ def lintseq_backward_sampling_pythonic(
                 weights += [0]
         return np.array(weights), indents, tab_width
 
-    def _lookup_children(target_line, indents, tab_width):
-        """Look up whether a target line for deletion has any dependent children, based
-        on indentation.
-
-        If attempting to apply LintSeq to languages other than Python, this method might
-        need to be adjusted.
-
-        Returns:
-            > A list of line indices that are "dependent" on the target line.
+    def _lookup_children(target_line, indents, tab_width, lang):
+        """Look up whether a target line for deletion has any dependent children.
+        For Python, this is based on indentation.
+        For JavaScript, this currently returns an empty list (simplification).
         """
+        if lang == "javascript":
+            return []
+        # Python-specific indentation logic
         target_indent = indents[target_line]
 
         ## no children case
@@ -299,14 +349,16 @@ def lintseq_backward_sampling_pythonic(
         affected_lines = edit_candidate
         edit = []
 
+        file_suffix = ".js" if language == "javascript" else ".py"
+
         while fail:
-            with tempfile.NamedTemporaryFile(suffix=".py", mode="r+") as fp:
+            with tempfile.NamedTemporaryFile(suffix=file_suffix, mode="r+") as fp:
                 if len(affected_lines) > 0:
                     affected_children = []
                     for line in affected_lines:
                         new_children = [
                             c
-                            for c in _lookup_children(line, indents, tab_width)
+                            for c in _lookup_children(line, indents, tab_width, language)
                             if not (c in edit or c in affected_lines)
                         ]
                         affected_children += new_children
@@ -319,17 +371,28 @@ def lintseq_backward_sampling_pythonic(
                 fp.seek(0)
 
                 error_traces = file_linter(
-                    fp.name, expected_error_traces=expected_error_traces
+                    fp.name, expected_error_traces=expected_error_traces, language=language
                 )
 
                 induced_deletion_size += len(error_traces)
                 fail = len(error_traces) > 0
 
                 if fail:
-                    affected_lines = [
-                        rm[int(line_id) - 1]
-                        for (msg_id, line_id, column_id, msg) in error_traces
-                    ]
+                    new_affected_lines = []
+                    for (msg_id, line_id_str, column_id_str, msg) in error_traces:
+                        try:
+                            line_id = int(line_id_str)
+                            if 0 < line_id <= len(rm):
+                                new_affected_lines.append(rm[line_id - 1])
+                            else:
+                                # Log or handle invalid line_id if necessary, e.g., for meta-errors
+                                # print(f"Warning: Linter reported error on invalid line {line_id_str} for current context.")
+                                pass
+                        except ValueError:
+                            # print(f"Warning: Could not parse line_id '{line_id_str}' to int.")
+                            pass # If line_id is not an int, skip
+                    affected_lines = new_affected_lines
+
 
                 depth += 1
 
@@ -391,12 +454,13 @@ def lintseq_backward_sampling_pythonic(
     init_errors = None
     if ignore_init_errors:
         candidate_lines_as_text = "\n".join([lines[i] for i in default_candidate_lines])
+        file_suffix = ".js" if language == "javascript" else ".py"
         with tempfile.NamedTemporaryFile(
-            delete_on_close=True, suffix=".py", mode="r+"
+            delete_on_close=True, suffix=file_suffix, mode="r+"
         ) as fp:
             fp.write(candidate_lines_as_text)
             fp.seek(0)
-            error_traces = file_linter(fp.name, expected_error_traces=None)
+            error_traces = file_linter(fp.name, expected_error_traces=None, language=language)
             fp.close()
         init_errors = error_traces
 
