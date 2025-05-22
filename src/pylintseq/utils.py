@@ -122,6 +122,48 @@ def file_linter(file, expected_error_traces=None, language="python"):
         except Exception as e:
             print(f"An unexpected error occurred during JavaScript linting: {e}")
             return [] # Or handle as appropriate
+    elif language == "php":
+        try:
+            result = subprocess.run(
+                ["phpcs", "--report=json", file],
+                capture_output=True,
+                text=True,
+                check=False, # phpcs may exit with non-zero if errors are found
+            )
+
+            if result.stdout.strip():
+                phpcs_output = json.loads(result.stdout)
+                # phpcs output is structured with a 'files' dictionary
+                # Each key in 'files' is a filepath, containing 'messages'
+                for filepath, data in phpcs_output.get("files", {}).items():
+                    for message in data.get("messages", []):
+                        # We'll take all messages, ERROR or WARNING
+                        error_trace = (
+                            message.get("source", "unknown-phpcs-rule"), # Use 'source' as msg_id
+                            str(message.get("line", 0)),
+                            str(message.get("column", 0)),
+                            message.get("message", ""),
+                        )
+                        if expected_error_traces is None or not error_trace in expected_error_traces:
+                            error_traces.append(error_trace)
+            # If phpcs is not found, FileNotFoundError is raised.
+            # If phpcs runs but there's an issue (e.g. bad option), stderr might have info.
+            # If stdout is empty but returncode is non-zero, it might indicate a phpcs error.
+            elif result.returncode != 0:
+                # print(f"PHPCS error for {file}: {result.stderr}") # Optional: log stderr
+                pass
+
+
+        except FileNotFoundError:
+            print("PHP_CodeSniffer (phpcs) is not installed. Please install it to lint PHP files. You can often install it using: composer global require \"squizlabs/php_codesniffer=*\"")
+            return []
+        except json.JSONDecodeError:
+            # This can happen if phpcs output is not JSON, e.g., a usage error message or if it's configured for a different report type.
+            # print(f"Failed to decode phpcs JSON output for {file}. Output was: {result.stdout}")
+            return []
+        except Exception as e:
+            # print(f"An unexpected error occurred during PHP linting: {e}")
+            return []
     else:
         print(f"Unsupported language: {language}")
 
@@ -307,11 +349,13 @@ def lintseq_backward_sampling(
     def _lookup_children(target_line, indents, tab_width, lang):
         """Look up whether a target line for deletion has any dependent children.
         For Python, this is based on indentation.
-        For JavaScript, this currently returns an empty list (simplification).
+        For JavaScript and PHP, this currently returns an empty list (simplification).
         """
         if lang == "javascript":
             return []
-        # Python-specific indentation logic
+        elif lang == "php":
+            return []
+        # Python-specific indentation logic (or default)
         target_indent = indents[target_line]
 
         ## no children case
@@ -349,7 +393,12 @@ def lintseq_backward_sampling(
         affected_lines = edit_candidate
         edit = []
 
-        file_suffix = ".js" if language == "javascript" else ".py"
+        if language == "javascript":
+            file_suffix = ".js"
+        elif language == "php":
+            file_suffix = ".php"
+        else: # Default to python
+            file_suffix = ".py"
 
         while fail:
             with tempfile.NamedTemporaryFile(suffix=file_suffix, mode="r+") as fp:

@@ -80,7 +80,7 @@ def parse_args():
         "--language",
         default="python",
         type=str,
-        help="The programming language of the input code (e.g., 'python', 'javascript')."
+        help="The programming language of the input code (e.g., 'python', 'javascript', 'php')."
     )
 
     args = parser.parse_args()

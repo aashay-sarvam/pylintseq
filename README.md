@@ -1,18 +1,24 @@
 # pylintseq
 
-A minimal package implementing the [LintSeq algorithm](https://lintseq.github.io/) for Python and JavaScript code, as described in [Piterbarg et al. 2024](https://arxiv.org/abs/2410.02749).
+A minimal package implementing the [LintSeq algorithm](https://lintseq.github.io/) for Python, JavaScript, and PHP code, as described in [Piterbarg et al. 2024](https://arxiv.org/abs/2410.02749).
 
 LintSeq reparameterizes code synthesis with language models into a sequential code edit generation problem, by refactoring programs in the training corpuses across equivalent *edit paths*.
 
 ## Prerequisites
 
-For Python code processing, `pylintseq` uses Pylint. Pylint is installed as a dependency.
+`pylintseq` relies on external linters for code analysis. Please ensure the linter for your target language is installed and accessible in your system's PATH.
 
-For JavaScript code processing, ESLint is required. You must install it separately. A common way to install ESLint globally is:
-```bash
-npm install -g eslint
-```
-Additionally, ESLint needs a configuration file (e.g., `eslint.config.mjs` or an older format like `.eslintrc.js`) in your project or in a relevant parent directory for it to work correctly. This configuration tells ESLint how to lint your code (e.g., parser options, rules). Please refer to the [official ESLint documentation](https://eslint.org/docs/latest/use/configure/) for details on setting up its configuration. `pylintseq` will use the ESLint found in your system's PATH and its corresponding configuration.
+-   **Python**: `pylintseq` uses Pylint. Pylint is installed as a dependency of this package.
+-   **JavaScript**: ESLint is required. You must install it separately. A common way to install ESLint globally is:
+    ```bash
+    npm install -g eslint
+    ```
+    Additionally, ESLint needs a configuration file (e.g., `eslint.config.mjs` or an older format like `.eslintrc.js`) in your project or relevant directory. Please refer to the [official ESLint documentation](https://eslint.org/docs/latest/use/configure/) for configuration details.
+-   **PHP**: PHP_CodeSniffer (`phpcs`) is required. You must install it separately. A common method is using Composer:
+    ```bash
+    composer global require "squizlabs/php_codesniffer=*"
+    ```
+    Ensure that the Composer global bin directory (usually `~/.composer/vendor/bin` or `~/.config/composer/vendor/bin`) is added to your system's PATH. `phpcs` generally works with sensible defaults, but can also be configured with a `phpcs.xml` or similar file for project-specific standards. Refer to the [PHP_CodeSniffer documentation](https://github.com/squizlabs/PHP_CodeSniffer/wiki) for more details.
 
 ## Installation
 
@@ -40,14 +46,14 @@ pylintseq \
     -d DESTIONATION_DIR \                                  # default: saves data to the current working directory
     --prompt_data_field NAME_OF_PROMPT_DATA_FIELD \        # default: 'instruction' (pass as 'None' if not defined)
     --code_data_field NAME_OF_CODE_DATA_FIELD \            # default: 'response'
-    -l LANGUAGE_TO_PROCESS \                               # default: 'python' (e.g., 'python', 'javascript')
+    -l LANGUAGE_TO_PROCESS \                               # default: 'python' (e.g., 'python', 'javascript', 'php')
     -s NUMBER_OF_EDIT_PATHS_TO_GENERATE_PER_SAMPLE  \      # default: 1
     -c NUMBER_OF_CORES_TO_USE  \                           # default: 8
     --seed RANDOM_SEED \                                   # default: 1
 ```
 
 **Language Selection:**
-Use the `-l` or `--language` argument to specify the programming language of the input code. Currently supported languages are `"python"` (default) and `"javascript"`.
+Use the `-l` or `--language` argument to specify the programming language of the input code. Currently supported languages are `"python"` (default), `"javascript"`, and `"php"`.
 
 By default, the processed dataset will be generated in the current working directory (as a JSONLines file). To generate it elsewhere, you can specify a different target path by using the arguments `-d` or `--dest_dir`.
 
@@ -80,10 +86,10 @@ Edit sequences are saved as lists of strings to a column called `edit_path`. The
 
  > **Can I run `pylintseq` on code data that might contain natural language chain-of-thought (CoT) traces?**
  
- >> Yes. If your code data contains any natural language CoT traces interleaved with code (e.g., Python or JavaScript) in Markdown format, these traces will be stripped from data during processing.
+ >> Yes. If your code data contains any natural language CoT traces interleaved with code (e.g., Python, JavaScript, or PHP) in Markdown format, these traces will be stripped from data during processing.
 
 > **The dataset I ran `pylintseq` on had *m* examples in it, but some of these examples are missing from the output dataset. Is there a bug in the code?**
->> No. This will occur if there are programs in your dataset that have no executable code for the specified language (e.g., Python or JavaScript files consisting of comments only). Such examples will be detected and removed from data output by `pylintseq` during processing.
+>> No. This will occur if there are programs in your dataset that have no executable code for the specified language (e.g., Python, JavaScript, or PHP files consisting of comments only). Such examples will be detected and removed from data output by `pylintseq` during processing.
 
  > **I'm running `pylintseq` on a large dataset and the progress bar is updating slowly. Is `pylintseq` still running?**
  >> This implementation of the LintSeq algorithm is optimized for high throughput and low memory load on large data streams -- data is processed in batches, and updates to the progress bar are similarly batched. To speed up processing, you can increase the number of worker cores on launch using the key word arguments `-c` and `--num_workers`.
